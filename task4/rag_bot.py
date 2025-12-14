@@ -1,21 +1,20 @@
 import torch
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_core.prompts import PromptTemplate
-from langchain_huggingface import HuggingFacePipeline
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-
-import torch
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
-class SmartRAG:
-    def __init__(self, faiss_index_path, model_name="gpt2"):
-        # Загружаем FAISS
-        print("Загружаю векторную базу...")
-        self.embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+class WorkingRAG:
+    def __init__(self, faiss_index_path):
+        print("🚀 Инициализация RAG системы...")
+
+        # 1. Загружаем эмбеддинги и FAISS
+        self.embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'}
+        )
+
+        print("📁 Загружаю векторную базу знаний...")
         self.vector_store = FAISS.load_local(
             faiss_index_path,
             self.embeddings,
@@ -23,150 +22,205 @@ class SmartRAG:
         )
         print("✅ Векторная база загружена")
 
-        # Загружаем модель
-        print(f"Загружаю модель {model_name}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
+        # 2. Загружаем модель (используем русскоязычную или хорошо обученную)
+        print("🧠 Загружаю языковую модель...")
 
-        self.model = AutoModelForCausalLM.from_pretrained(model_name)
+        # Попробуем разные модели в порядке надежности
+        models_to_try = [
+            "sberbank-ai/rugpt3small_based_on_gpt2",  # Русскоязычная GPT-2
+            "ai-forever/rugpt3small_based_on_gpt2",  # Еще одна русская
+            "gpt2"  # Английская как запасной вариант
+        ]
 
+        self.model = None
+        self.tokenizer = None
+
+        for model_name in models_to_try:
+            try:
+                print(f"  Пробую {model_name}...")
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+                # Критически важные настройки для русских моделей
+                if "ru" in model_name or "sber" in model_name:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+
+                self.model = AutoModelForCausalLM.from_pretrained(model_name)
+                print(f"  ✅ {model_name} загружена успешно!")
+                self.model_name = model_name
+                break
+            except Exception as e:
+                print(f"  ❌ {model_name}: {str(e)[:100]}...")
+                continue
+
+        if self.model is None:
+            print("❌ Не удалось загрузить ни одну модель!")
+            raise Exception("Все модели не сработали")
+
+        # 3. Создаем пайплайн с правильными параметрами
+        print("⚙️ Настраиваю генератор...")
         self.generator = pipeline(
             "text-generation",
             model=self.model,
             tokenizer=self.tokenizer,
-            max_new_tokens=100,  # Максимум новых токенов в ответе
-            temperature=0.7
+            max_new_tokens=80,  # Короткие ответы
+            temperature=0.8,  # Более креативно
+            top_p=0.92,  # Контроль разнообразия
+            do_sample=True,  # Включить случайность
+            repetition_penalty=1.2,  # Штраф за повторения
+            pad_token_id=self.tokenizer.pad_token_id if hasattr(self.tokenizer, 'pad_token_id') else 50256,
+            truncation=True,  # Явно включаем усечение
+            device=-1  # CPU для стабильности
         )
-        print("✅ Модель загружена")
 
-    def _limit_context_length(self, text, max_tokens=500):
-        """Ограничиваем длину текста по токенам"""
-        tokens = self.tokenizer.encode(text)
-        if len(tokens) > max_tokens:
-            tokens = tokens[:max_tokens]
-            # Декодируем обратно в текст
-            return self.tokenizer.decode(tokens, skip_special_tokens=True)
-        return text
+        print("✅ Система готова к работе!\n")
 
-    def ask(self, question):
-        print("🔍 Ищу релевантные документы...")
+    def create_smart_prompt(self, question, context):
+        """Создает умный промпт в зависимости от модели"""
+        if "ru" in self.model_name or "sber" in self.model_name:
+            # Промпт для русскоязычной модели
+            return f"""Задание: Ответь на вопрос на основе информации из документов.
 
-        # Ищем документы (берем меньше для начала)
-        docs = self.vector_store.similarity_search(question, k=2)
-
-        # Формируем контекст, но ограничиваем длину каждого документа
-        context_parts = []
-        for i, doc in enumerate(docs):
-            # Берем только первые 300 символов из каждого документа
-            doc_text = doc.page_content[:300]
-            if len(doc.page_content) > 300:
-                doc_text += "..."
-            context_parts.append(f"[Документ {i + 1}] {doc_text}")
-
-        context = "\n".join(context_parts)
-
-        print(f"📄 Найдено {len(docs)} документов, общий размер контекста: {len(context)} символов")
-
-        # Формируем короткий промпт
-        prompt = f"""Ответь на вопрос на основе информации.
-
-Информация:
+Контекстная информация:
 {context}
 
 Вопрос: {question}
 
-Ответ:"""
-
-        # Проверяем длину промпта
-        prompt_tokens = len(self.tokenizer.encode(prompt))
-        print(f"📊 Длина промпта в токенах: {prompt_tokens}")
-
-        if prompt_tokens > 900:  # Оставляем место для ответа
-            print("⚠️  Промпт слишком длинный, сокращаю...")
-            # Сокращаем контекст еще больше
-            context = context[:200] + "..."
-            prompt = f"""Ответь на вопрос.
-
-Контекст: {context}
-
-Вопрос: {question}
+Требования к ответу:
+1. Будь точным и используй информацию из контекста
+2. Если информации нет, скажи "В документах нет информации"
+3. Отвечай кратко и по делу
 
 Ответ:"""
+        else:
+            # Промпт для английской модели (более простой)
+            return f"""Based on this information: {context}
 
-        print("🤖 Генерирую ответ...")
+Question: {question}
+
+Answer in Russian:"""
+
+    def ask(self, question):
+        """Основной метод для вопросов"""
+        print(f"\n🔍 Вопрос: '{question}'")
+
+        # 1. Ищем релевантные документы (берем немного)
+        print("   Ищу информацию в базе знаний...")
+        try:
+            docs = self.vector_store.similarity_search(question, k=2)
+            print(f"   Найдено документов: {len(docs)}")
+        except Exception as e:
+            print(f"   ❌ Ошибка поиска: {e}")
+            return "Ошибка при поиске информации"
+
+        # 2. Формируем КОРОТКИЙ контекст
+        context_parts = []
+        for i, doc in enumerate(docs):
+            # Берем только начало каждого документа
+            content = doc.page_content.strip()
+            if len(content) > 150:  # Ограничиваем длину
+                content = content[:147] + "..."
+            context_parts.append(f"[Источник {i + 1}]: {content}")
+
+        context = "\n".join(context_parts)
+
+        # 3. Создаем промпт
+        prompt = self.create_smart_prompt(question, context)
+
+        # 4. Проверяем длину промпта
+        tokens = self.tokenizer.encode(prompt)
+        print(f"   Длина промпта: {len(tokens)} токенов")
+
+        if len(tokens) > 900:  # Слишком длинный
+            print("   ⚠️  Слишком длинный промпт, сокращаю...")
+            # Берем только первый документ
+            if docs:
+                content = docs[0].page_content.strip()
+                if len(content) > 100:
+                    content = content[:97] + "..."
+                context = f"[Источник]: {content}"
+                prompt = self.create_smart_prompt(question, context)
+
+        # 5. Генерируем ответ
+        print("   🤖 Генерирую ответ...")
         try:
             result = self.generator(
                 prompt,
                 return_full_text=False,
-                max_length=min(prompt_tokens + 100, 1024)  # Не превышаем лимит модели
+                num_return_sequences=1
             )
 
             if result and len(result) > 0:
                 answer = result[0]["generated_text"].strip()
-                # Очищаем ответ от возможных повторений промпта
+
+                # Очистка ответа
                 if prompt in answer:
                     answer = answer.replace(prompt, "").strip()
+
+                # Убираем повторения
+                lines = answer.split('\n')
+                if len(lines) > 1:
+                    answer = lines[0].strip()
+
+                print(f"   ✅ Ответ сгенерирован ({len(answer)} символов)")
                 return answer
             else:
                 return "Не удалось сгенерировать ответ"
 
         except Exception as e:
-            print(f"❌ Ошибка генерации: {e}")
-            # Пробуем совсем короткий промпт
-            short_prompt = f"Вопрос: {question}\nОтвет:"
-            try:
-                result = self.generator(short_prompt, return_full_text=False, max_new_tokens=50)
-                if result:
-                    return result[0]["generated_text"].strip()
-            except:
-                return "Не могу ответить из-за технических ограничений"
+            print(f"   ❌ Ошибка генерации: {e}")
+            # Возвращаем информацию из контекста как есть
+            if context:
+                return f"На основе найденной информации: {context[:200]}..."
+            return "Не удалось обработать запрос"
 
 
 def main():
-    print("=" * 60)
-    print("🤖 УМНЫЙ RAG БОТ (с ограничением длины контекста)")
-    print("=" * 60)
+    print("=" * 70)
+    print("🤖 РАБОЧИЙ RAG БОТ С РУССКОЯЗЫЧНОЙ МОДЕЛЬЮ")
+    print("=" * 70)
+
+    # Проверяем наличие FAISS индекса
+    import os
+    if not os.path.exists("./task3/faiss_index"):
+        print("❌ ОШИБКА: Не найден FAISS индекс!")
+        print("Убедитесь, что путь './task3/faiss_index' существует")
+        print("И содержит файлы: index.faiss и index.pkl")
+        return
 
     try:
-        rag = SmartRAG("./task3/faiss_index", model_name="gpt2")
+        rag = WorkingRAG("./task3/faiss_index")
 
-        print("\n" + "=" * 60)
-        print("Готов к работе! Задавайте вопросы.")
-        print("Команды: 'выход' - завершить, 'debug' - режим отладки")
-        print("=" * 60)
-
-        debug_mode = False
+        print("\n" + "=" * 70)
+        print("💡 СОВЕТ: Задавайте конкретные вопросы по содержимому документов")
+        print("   Пример: 'Что такое инфернальный огонь?'")
+        print("   Пример: 'Кто главный герой?'")
+        print("=" * 70)
 
         while True:
-            q = input("\n💭 Ваш вопрос: ").strip()
+            print("\n" + "-" * 70)
+            question = input("❔ Ваш вопрос: ").strip()
 
-            if not q:
+            if not question:
                 continue
 
-            if q.lower() in ["выход", "exit", "quit"]:
-                print("До свидания!")
+            if question.lower() in ["выход", "exit", "quit", "стоп"]:
+                print("\n👋 До свидания!")
                 break
 
-            if q.lower() == "debug":
-                debug_mode = not debug_mode
-                status = "ВКЛЮЧЕН" if debug_mode else "ВЫКЛЮЧЕН"
-                print(f"Режим отладки {status}")
-                continue
+            # Обрабатываем вопрос
+            answer = rag.ask(question)
 
-            answer = rag.ask(q)
+            print("\n" + "=" * 70)
+            print("💬 ОТВЕТ:")
+            print(answer)
+            print("=" * 70)
 
-            if debug_mode:
-                print("\n" + "=" * 60)
-                print("🔧 РЕЖИМ ОТЛАДКИ")
-                print(f"Вопрос: {q}")
-                print(f"Ответ: {answer}")
-                print("=" * 60)
-            else:
-                print(f"\n🤖 ОТВЕТ: {answer}")
-
+    except KeyboardInterrupt:
+        print("\n\n👋 Завершение по запросу пользователя")
     except Exception as e:
-        print(f"❌ Критическая ошибка: {e}")
-        print("Проверьте путь к FAISS индексу: ./task3/faiss_index")
+        print(f"\n❌ Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
