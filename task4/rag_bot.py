@@ -96,7 +96,7 @@ class RAGBot:
 
     def ask(self, query):
         # Получаем документы
-        docs = self.retriever(query)
+        docs = self.retriever._get_relevant_documents(query)
 
         # Собираем текстовый контекст
         context = " ".join([d.page_content for d in docs])
