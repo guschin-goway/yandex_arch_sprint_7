@@ -22,7 +22,7 @@ class LocalLLM:
             "text-generation",
             model=self.model,
             tokenizer=self.tokenizer,
-            max_new_tokens=150,
+            max_new_tokens=520,
             temperature=0.7,
             top_p=0.9,
             do_sample=True,
@@ -76,7 +76,7 @@ class SimpleRAGBot:
             input_variables=["question", "context"]
         )
 
-    def ask(self, query, k=3):
+    def ask(self, query, k=30):
         """Основной метод для вопросов"""
         try:
             # 1. Поиск релевантных документов
