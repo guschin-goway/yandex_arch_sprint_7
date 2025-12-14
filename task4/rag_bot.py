@@ -52,8 +52,7 @@ class RAGBot:
 Вопрос: {question}
 
 Подумай шаг за шагом и дай подробный ответ:"""
-
-        self.prompt = PromptTemplate(template=template, input_variables=["context", "question"])
+        self.prompt = PromptTemplate(template=template, input_variables = ["input", "context"])
 
         # Создаем цепочку для работы с документами
         combine_docs_chain = create_stuff_documents_chain(
