@@ -1,0 +1,79 @@
+from langchain_classic.chains import RetrievalQA
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.prompts import PromptTemplate
+
+from langchain_huggingface import HuggingFacePipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+
+
+class LocalLLM:
+    def __init__(self, model_name="tiiuae/falcon-7b-instruct", device="cpu"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(model_name)
+        self.pipe = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=self.tokenizer,
+            device=0 if device == "cuda" else -1,
+            max_length=512
+        )
+
+    def __call__(self, prompt_text):
+        output = self.pipe(prompt_text, return_full_text=False)
+        return output[0]["generated_text"]
+
+
+# Класс RAG-бота
+class RAGBot:
+    def __init__(self, faiss_index_path, embedding_model="all-MiniLM-L6-v2", llm_model="tiiuae/falcon-7b-instruct"):
+        # Эмбеддинги
+        self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
+        # Загрузка FAISS индекса
+        self.vector_store = FAISS.load_local(
+            faiss_index_path,
+            self.embeddings,
+            allow_dangerous_deserialization=True
+        )
+        self.retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
+
+        # Локальная LLM
+        self.llm = HuggingFacePipeline(pipeline=LocalLLM(llm_model))
+
+        # Few-shot + CoT промпт
+        examples = """
+Q: Расскажи про Инфернальный Огонь?  
+A: Сначала посмотрим в базе знаний. В документах указано, очень сильная тёмная магия.
+"""
+        template = f"""
+System: Ты помощник, который сначала размышляет, а потом отвечает. Всегда пиши свои шаги.
+{examples}
+
+Q: {{question}}
+A:
+"""
+        self.prompt = PromptTemplate(template=template, input_variables=["question"])
+        self.qa_chain = RetrievalQA(
+            retriever=self.retriever,
+            combine_documents_chain_kwargs={"prompt": self.prompt},
+            llm=self.llm
+        )
+
+    def ask(self, query):
+        return self.qa_chain.run(query)
+
+
+# Интерактивный интерфейс
+def main():
+    faiss_index_path = "./task3/faiss_index"
+    bot = RAGBot(faiss_index_path)
+    while True:
+        query = input("\nВведите вопрос: ")
+        if query.lower() in ["exit", "выход"]:
+            break
+        answer = bot.ask(query)
+        print("\nОтвет:\n", answer)
+
+
+if __name__ == "__main__":
+    main()
