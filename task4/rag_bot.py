@@ -27,9 +27,9 @@ class WorkingRAG:
 
         # Попробуем разные модели в порядке надежности
         models_to_try = [
-            "sberbank-ai/rugpt3small_based_on_gpt2",  # Русскоязычная GPT-2
-            "ai-forever/rugpt3small_based_on_gpt2",  # Еще одна русская
-            "gpt2"  # Английская как запасной вариант
+            "sberbank-ai/rugpt3large_based_on_gpt2",  # Русскоязычная GPT-2
+            # "ai-forever/rugpt3small_based_on_gpt2",  # Еще одна русская
+            # "gpt2"  # Английская как запасной вариант
         ]
 
         self.model = None
