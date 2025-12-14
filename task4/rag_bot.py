@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 class LocalLLM:
 
 
-    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2", device="cpu"):
+    def __init__(self, model_name="TheBloke/WizardLM-7B-uncensored-HF-4bit", device="cpu"):
         if device == "cuda" and torch.cuda.is_available():
             device_map = "auto"
             torch_dtype = torch.float16  # Используем половинную точность для экономии памяти
