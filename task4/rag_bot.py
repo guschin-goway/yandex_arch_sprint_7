@@ -122,7 +122,7 @@ def main():
     faiss_index_path = "./task3/faiss_index"
 
     print("=" * 60)
-    print("🤖 Простой RAG Bot")
+    print("Простой RAG Bot")
     print("=" * 60)
 
     # Выбор модели
@@ -150,16 +150,16 @@ def main():
             embedding_model="sentence-transformers/all-MiniLM-L6-v2",
             llm_model=llm_model
         )
-        print("✅ Бот успешно инициализирован!")
+        print("Бот успешно инициализирован!")
 
     except Exception as e:
-        print(f"❌ Ошибка при загрузке модели {llm_model}: {e}")
+        print(f"Ошибка при загрузке модели {llm_model}: {e}")
         print("Пробую загрузить gpt2...")
         bot = SimpleRAGBot(
             faiss_index_path=faiss_index_path,
             llm_model="gpt2"
         )
-        print("✅ Бот с GPT2 успешно инициализирован!")
+        print("Бот с GPT2 успешно инициализирован!")
 
     print("\n" + "=" * 60)
     print("Введите 'exit' или 'выход' для завершения")
@@ -181,24 +181,24 @@ def main():
 
             # Выводим ответ
             print("\n" + "=" * 60)
-            print("💬 ОТВЕТ:")
+            print("ОТВЕТ:")
             print(result["answer"])
-            print("\n📚 ИСТОЧНИКИ:")
+            # print("\nИСТОЧНИКИ:")
 
-            if result["sources"]:
-                for i, doc in enumerate(result["sources"], 1):
-                    preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
-                    print(f"{i}. {preview}")
-            else:
-                print("Источники не найдены")
+            # if result["sources"]:
+            #     for i, doc in enumerate(result["sources"], 1):
+            #         preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
+            #         print(f"{i}. {preview}")
+            # else:
+            #     print("Источники не найдены")
 
             print("=" * 60)
 
         except KeyboardInterrupt:
-            print("\n\nЗавершение работы...")
+            print("\nЗавершение работы...")
             break
         except Exception as e:
-            print(f"\n❌ Ошибка: {e}")
+            print(f"Ошибка: {e}")
 
 
 if __name__ == "__main__":
