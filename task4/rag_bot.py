@@ -1,8 +1,9 @@
-from langchain_classic.chains import create_retrieval_chain
+from langchain.chains import create_retrieval_chain, create_history_aware_retriever
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains import create_retrieval_chain
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
-
 from langchain_huggingface import HuggingFacePipeline
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
@@ -15,8 +16,10 @@ class LocalLLM:
             "text-generation",
             model=self.model,
             tokenizer=self.tokenizer,
-            device=0 if device=="cuda" else -1,
-            max_length=512
+            device=0 if device == "cuda" else -1,
+            max_length=512,
+            temperature=0.1,
+            do_sample=True
         )
 
     def __call__(self, prompt_text):
@@ -41,30 +44,33 @@ class RAGBot:
         self.llm = HuggingFacePipeline(pipeline=LocalLLM(llm_model))
 
         # Few-shot + CoT промпт
-        examples = """
-Q: Расскажи про Инфернальный Огонь?  
-A: Сначала посмотрим в базе знаний. В документах указано, очень сильная тёмная магия.
-"""
-        template = f"""
-System: Ты помощник, который сначала размышляет, а потом отвечает. Всегда пиши свои шаги.
-{examples}
+        template = """Система: Ты помощник, который сначала размышляет, а потом отвечает. 
+Используй следующие фрагменты контекста, чтобы ответить на вопрос. 
+Если не знаешь ответа, скажи, что не знаешь. Отвечай подробно.
 
-Q: {{question}}
-A:
-"""
-        self.prompt = PromptTemplate(template=template, input_variables=["question"])
+Контекст: {context}
+
+Вопрос: {question}
+
+Подумай шаг за шагом и дай подробный ответ:"""
+
+        self.prompt = PromptTemplate(template=template, input_variables=["context", "question"])
+
+        # Создаем цепочку для работы с документами
+        combine_docs_chain = create_stuff_documents_chain(
+            llm=self.llm,
+            prompt=self.prompt
+        )
+
+        # Создаем полную RAG цепочку
         self.qa_chain = create_retrieval_chain(
-            llm_chain=self.llm,
-            retriever=self.vector_store.as_retriever(),
-            return_source_documents=True,  # если хочешь видеть источники
-            chain_type="stuff",  # можно "stuff", "map_reduce" или "refine"
-            chain_type_kwargs={
-                "prompt": self.prompt
-            }
+            retriever=self.retriever,
+            combine_docs_chain=combine_docs_chain
         )
 
     def ask(self, query):
-        return self.qa_chain.run(query)
+        result = self.qa_chain.invoke({"input": query})
+        return result["answer"]
 
 
 # Интерактивный интерфейс
