@@ -23,7 +23,9 @@ class LocalLLM:
 
     def __call__(self, prompt_text):
         output = self.pipe(prompt_text, return_full_text=False)
-        return output[0]["generated_text"]
+        if isinstance(output[0], dict):
+            return output[0]["generated_text"]
+        return output[0]
 
 
 # Класс RAG-бота
