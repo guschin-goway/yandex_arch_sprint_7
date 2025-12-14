@@ -85,93 +85,19 @@ class WorkingRAG:
 
 Вопрос: {question}
 
-Требования к ответу:
-1. Будь точным и используй информацию из контекста
-2. Если информации нет, скажи "В документах нет информации"
-3. Отвечай кратко и по делу
+Ответ:
+- Если информация есть в документах, ответь кратко.
+- Если информации нет, скажи "В документах нет информации".
 
 Ответ:"""
-        else:
-            # Промпт для английской модели (более простой)
-            return f"""Based on this information: {context}
+        result = self.generator(prompt, return_full_text=False, num_return_sequences=1)
+        answer = result[0]["generated_text"].strip()
 
-Question: {question}
+        # Очищаем повтор промпта
+        if prompt in answer:
+            answer = answer.replace(prompt, "").strip()
 
-Answer in Russian:"""
-
-    def ask(self, question):
-        """Основной метод для вопросов"""
-        print(f"\n🔍 Вопрос: '{question}'")
-
-        # 1. Ищем релевантные документы (берем немного)
-        print("   Ищу информацию в базе знаний...")
-        try:
-            docs = self.vector_store.similarity_search(question, k=2)
-            print(f"   Найдено документов: {len(docs)}")
-        except Exception as e:
-            print(f"   ❌ Ошибка поиска: {e}")
-            return "Ошибка при поиске информации"
-
-        # 2. Формируем КОРОТКИЙ контекст
-        context_parts = []
-        for i, doc in enumerate(docs):
-            # Берем только начало каждого документа
-            content = doc.page_content.strip()
-            if len(content) > 150:  # Ограничиваем длину
-                content = content[:147] + "..."
-            context_parts.append(f"[Источник {i + 1}]: {content}")
-
-        context = "\n".join(context_parts)
-
-        # 3. Создаем промпт
-        prompt = self.create_smart_prompt(question, context)
-
-        # 4. Проверяем длину промпта
-        tokens = self.tokenizer.encode(prompt)
-        print(f"   Длина промпта: {len(tokens)} токенов")
-
-        if len(tokens) > 900:  # Слишком длинный
-            print("   ⚠️  Слишком длинный промпт, сокращаю...")
-            # Берем только первый документ
-            if docs:
-                content = docs[0].page_content.strip()
-                if len(content) > 100:
-                    content = content[:97] + "..."
-                context = f"[Источник]: {content}"
-                prompt = self.create_smart_prompt(question, context)
-
-        # 5. Генерируем ответ
-        print("   🤖 Генерирую ответ...")
-        try:
-            result = self.generator(
-                prompt,
-                return_full_text=False,
-                num_return_sequences=1
-            )
-
-            if result and len(result) > 0:
-                answer = result[0]["generated_text"].strip()
-
-                # Очистка ответа
-                if prompt in answer:
-                    answer = answer.replace(prompt, "").strip()
-
-                # Убираем повторения
-                lines = answer.split('\n')
-                if len(lines) > 1:
-                    answer = lines[0].strip()
-
-                print(f"   ✅ Ответ сгенерирован ({len(answer)} символов)")
-                return answer
-            else:
-                return "Не удалось сгенерировать ответ"
-
-        except Exception as e:
-            print(f"   ❌ Ошибка генерации: {e}")
-            # Возвращаем информацию из контекста как есть
-            if context:
-                return f"На основе найденной информации: {context[:200]}..."
-            return "Не удалось обработать запрос"
+        return answer
 
 
 def main():
