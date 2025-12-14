@@ -90,6 +90,43 @@ class WorkingRAG:
 - Если информации нет, скажи "В документах нет информации".
 
 Ответ:"""
+        else:
+            # Промпт для английской модели (более простой)
+            return f"""Based on this information: {context}
+
+Question: {question}
+"""
+
+    def ask(self, question):
+        print(f"\n🔍 Вопрос: '{question}'")
+        docs = self.vector_store.similarity_search(question, k=2)
+
+        if not docs:
+            return "В документах нет информации"
+
+        # Формируем контекст
+        context_parts = []
+        for i, doc in enumerate(docs):
+            content = doc.page_content.strip()
+            if len(content) > 150:
+                content = content[:147] + "..."
+            context_parts.append(f"[Источник {i + 1}]: {content}")
+        context = "\n".join(context_parts)
+
+        # Если контекст почти пустой
+        if not context.strip():
+            return "В документах нет информации"
+
+        # Создаем промпт
+        prompt = f"""Документы:
+    {context}
+
+    Вопрос: {question}
+
+    Ответ:
+    - Если информация есть в документах, ответь кратко.
+    - Если информации нет, скажи "В документах нет информации"."""
+
         result = self.generator(prompt, return_full_text=False, num_return_sequences=1)
         answer = result[0]["generated_text"].strip()
 
