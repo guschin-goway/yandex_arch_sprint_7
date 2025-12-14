@@ -55,7 +55,7 @@ class LocalLLM:
 
 # Класс RAG-бота
 class RAGBot:
-    def __init__(self, faiss_index_path, embedding_model="all-MiniLM-L6-v2", llm_model="sentence-transformers/all-MiniLM-L6-v2"):
+    def __init__(self, faiss_index_path, embedding_model="all-MiniLM-L6-v2", llm_model="TheBloke/WizardLM-7B-uncensored-HF-4bit"):
         # Эмбеддинги
         self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
         # Загрузка FAISS индекса
