@@ -10,12 +10,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 class LocalLLM:
     def __init__(self, model_name="tiiuae/falcon-7b-instruct", device="cpu"):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(model_name)
         self.pipe = pipeline(
             "text-generation",
-            model=model,
+            model=self.model,
             tokenizer=self.tokenizer,
-            device=0 if device == "cuda" else -1,
+            device=0 if device=="cuda" else -1,
             max_length=512
         )
 
