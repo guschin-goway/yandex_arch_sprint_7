@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 class LocalLLM:
 
 
-    def __init__(self, model_name="TheBloke/WizardLM-7B-uncensored-HF-4bit", device="cpu"):
+    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2", device="cpu"):
         if device == "cuda" and torch.cuda.is_available():
             device_map = "auto"
             torch_dtype = torch.float16  # Используем половинную точность для экономии памяти
@@ -55,7 +55,7 @@ class LocalLLM:
 
 # Класс RAG-бота
 class RAGBot:
-    def __init__(self, faiss_index_path, embedding_model="all-MiniLM-L6-v2", llm_model="TheBloke/WizardLM-7B-uncensored-HF-4bit"):
+    def __init__(self, faiss_index_path, embedding_model="all-MiniLM-L6-v2", llm_model="sentence-transformers/all-MiniLM-L6-v2"):
         # Эмбеддинги
         self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
         # Загрузка FAISS индекса
@@ -95,7 +95,16 @@ class RAGBot:
         )
 
     def ask(self, query):
-        result = self.qa_chain.invoke({"input": query})
+        # Получаем документы
+        docs = self.retriever.get_relevant_documents(query)
+
+        # Собираем текстовый контекст
+        context = " ".join([d.page_content for d in docs])
+        MAX_CONTEXT_CHARS = 2000
+        context = context[:MAX_CONTEXT_CHARS]  # обрезаем
+
+        # Вызываем цепочку с ограниченным контекстом
+        result = self.qa_chain.invoke({"input": query, "context": context})
         return result["answer"]
 
 
