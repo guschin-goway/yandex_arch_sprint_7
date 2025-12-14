@@ -1,4 +1,4 @@
-from langchain_classic.chains import RetrievalQA
+from langchain_classic.chains import create_retrieval_chain
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
@@ -53,10 +53,14 @@ Q: {{question}}
 A:
 """
         self.prompt = PromptTemplate(template=template, input_variables=["question"])
-        self.qa_chain = RetrievalQA(
-            retriever=self.retriever,
-            combine_documents_chain_kwargs={"prompt": self.prompt},
-            llm=self.llm
+        self.qa_chain = create_retrieval_chain(
+            llm=self.llm,
+            retriever=self.vector_store.as_retriever(),
+            return_source_documents=True,  # если хочешь видеть источники
+            chain_type="stuff",  # можно "stuff", "map_reduce" или "refine"
+            chain_type_kwargs={
+                "prompt": self.prompt
+            }
         )
 
     def ask(self, query):
