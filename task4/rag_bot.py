@@ -63,9 +63,9 @@ class WorkingRAG:
             model=self.model,
             tokenizer=self.tokenizer,
             max_new_tokens=80,  # Короткие ответы
-            temperature=0.8,  # Более креативно
-            top_p=0.92,  # Контроль разнообразия
-            do_sample=True,  # Включить случайность
+            temperature=0.5,  # Более креативно
+            top_p=0.85,  # Контроль разнообразия
+            do_sample=False,  # Включить случайность
             repetition_penalty=1.2,  # Штраф за повторения
             pad_token_id=self.tokenizer.pad_token_id if hasattr(self.tokenizer, 'pad_token_id') else 50256,
             truncation=True,  # Явно включаем усечение
