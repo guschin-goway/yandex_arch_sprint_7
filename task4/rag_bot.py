@@ -52,7 +52,7 @@ class RAGBot:
 Вопрос: {question}
 
 Подумай шаг за шагом и дай подробный ответ:"""
-        self.prompt = PromptTemplate(template=template, input_variables = ["input", "context"])
+        self.prompt = PromptTemplate(template=template, input_variables=["context", "question"])
 
         # Создаем цепочку для работы с документами
         combine_docs_chain = create_stuff_documents_chain(
@@ -67,7 +67,7 @@ class RAGBot:
         )
 
     def ask(self, query):
-        result = self.qa_chain.invoke({"input": query})
+        result = self.qa_chain.invoke({"question": query})
         return result["answer"]
 
 
