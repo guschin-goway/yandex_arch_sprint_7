@@ -54,7 +54,7 @@ A:
 """
         self.prompt = PromptTemplate(template=template, input_variables=["question"])
         self.qa_chain = create_retrieval_chain(
-            llm=self.llm,
+            llm_chain=self.llm,
             retriever=self.vector_store.as_retriever(),
             return_source_documents=True,  # если хочешь видеть источники
             chain_type="stuff",  # можно "stuff", "map_reduce" или "refine"
