@@ -1,6 +1,4 @@
 import torch
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_classic.chains import create_retrieval_chain
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
@@ -9,44 +7,31 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
 class LocalLLM:
-    def __init__(self, model_name="tiiuae/falcon-7b-instruct", device="cpu"):
-        # Проверяем CUDA
-        if device == "cuda" and torch.cuda.is_available():
-            self.device = torch.device("cuda")
-            torch_dtype = torch.float16
-        else:
-            self.device = torch.device("cpu")
-            torch_dtype = torch.float32
-
-        # Загружаем токенизатор
+    def __init__(self, model_name="gpt2", device="cpu"):  # Используем gpt2 как надежную модель
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
         # Устанавливаем pad_token
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        # Загружаем модель
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch_dtype,
-            trust_remote_code=True
-        ).to(self.device)
+        # Загружаем модель на CPU для стабильности
+        self.model = AutoModelForCausalLM.from_pretrained(model_name)
 
-        # Создаем пайплайн
+        # Простой пайплайн на CPU
         self.pipe = pipeline(
             "text-generation",
             model=self.model,
             tokenizer=self.tokenizer,
-            max_new_tokens=200,
+            max_new_tokens=150,
             temperature=0.7,
             top_p=0.9,
             do_sample=True,
             pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            device=0 if self.device.type == "cuda" else -1
+            device=-1  # Всегда CPU для стабильности
         )
 
-    def __call__(self, prompt_text):
+    def generate(self, prompt_text):
+        """Генерация текста"""
         try:
             output = self.pipe(prompt_text, return_full_text=False)
             if output and isinstance(output, list) and len(output) > 0:
@@ -60,10 +45,9 @@ class LocalLLM:
             return ""
 
 
-# Класс RAG-бота
-class RAGBot:
-    def __init__(self, faiss_index_path, embedding_model="all-MiniLM-L6-v2", llm_model="tiiuae/falcon-7b-instruct"):
-        # Эмбеддинги
+class SimpleRAGBot:
+    def __init__(self, faiss_index_path, embedding_model="sentence-transformers/all-MiniLM-L6-v2", llm_model="gpt2"):
+        # Эмбеддинги для поиска
         self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
 
         # Загрузка FAISS индекса
@@ -72,107 +56,119 @@ class RAGBot:
             self.embeddings,
             allow_dangerous_deserialization=True
         )
-        self.retriever = self.vector_store.as_retriever(search_kwargs={"k": 3})
 
-        # Локальная LLM
-        self.llm = HuggingFacePipeline(pipeline=LocalLLM(llm_model))
+        # Создаем LLM
+        self.llm = LocalLLM(llm_model)
 
         # Промпт
-        template = """Ты полезный ассистент. Ответь на вопрос на основе предоставленного контекста.
-Если в контексте нет информации для ответа, скажи "Я не нашел информацию по этому вопросу в документах".
+        self.template = """Вопрос: {question}
 
-Контекст: {context}
+Контекст из документов:
+{context}
 
-Вопрос: {input}
+На основе предоставленного контекста, дай подробный ответ на вопрос.
+Если в контексте нет нужной информации, скажи: "В предоставленных документах нет информации по этому вопросу."
 
 Ответ:"""
 
-        self.prompt = PromptTemplate(template=template, input_variables=["context", "input"])
-
-        # Создаем цепочку для работы с документами
-        combine_docs_chain = create_stuff_documents_chain(
-            llm=self.llm,
-            prompt=self.prompt
+        self.prompt_template = PromptTemplate(
+            template=self.template,
+            input_variables=["question", "context"]
         )
 
-        # Создаем полную RAG цепочку
-        self.qa_chain = create_retrieval_chain(
-            retriever=self.retriever,
-            combine_docs_chain=combine_docs_chain
-        )
-
-    def ask(self, query):
+    def ask(self, query, k=3):
+        """Основной метод для вопросов"""
         try:
-            # Используем invoke вместо прямого вызова метода
-            result = self.qa_chain.invoke({"input": query})
-            return result.get("answer", "Не удалось получить ответ.")
+            # 1. Поиск релевантных документов
+            docs = self.vector_store.similarity_search(query, k=k)
+
+            # 2. Формирование контекста
+            context = "\n---\n".join([
+                f"Документ {i + 1}: {doc.page_content}"
+                for i, doc in enumerate(docs)
+            ])
+
+            # 3. Формирование финального промпта
+            final_prompt = self.prompt_template.format(
+                question=query,
+                context=context
+            )
+
+            print(f"\n{'=' * 50}")
+            print("Ищу информацию...")
+            print(f"Найдено документов: {len(docs)}")
+            print(f"{'=' * 50}\n")
+
+            # 4. Генерация ответа
+            answer = self.llm.generate(final_prompt)
+
+            # 5. Возврат ответа и источников
+            return {
+                "answer": answer,
+                "sources": docs,
+                "context_preview": context[:500] + "..." if len(context) > 500 else context
+            }
+
         except Exception as e:
             print(f"Ошибка в ask: {e}")
-            # Альтернативный простой способ
-            return self.simple_ask(query)
-
-    def simple_ask(self, query):
-        """Простая реализация без сложных цепочек"""
-        try:
-            # Получаем релевантные документы
-            docs = self.retriever.invoke(query)
-
-            # Собираем контекст
-            context = "\n".join([doc.page_content for doc in docs])
-
-            # Формируем промпт
-            prompt_text = self.prompt.format(context=context, input=query)
-
-            # Генерируем ответ
-            answer = self.llm(prompt_text)
-            return answer
-        except Exception as e:
-            print(f"Ошибка в simple_ask: {e}")
-            return "Произошла ошибка при обработке запроса."
+            return {
+                "answer": f"Произошла ошибка: {str(e)}",
+                "sources": [],
+                "context_preview": ""
+            }
 
 
-# Интерактивный интерфейс
 def main():
     faiss_index_path = "./task3/faiss_index"
 
-    # Проверяем CUDA
-    if torch.cuda.is_available():
-        print("✅ Используется GPU")
-        device = "cuda"
-    else:
-        print("⚠️  Используется CPU")
-        device = "cpu"
+    print("=" * 60)
+    print("🤖 Простой RAG Bot")
+    print("=" * 60)
 
-    # Пробуем разные модели, если Falcon не работает
-    models_to_try = [
-        "tiiuae/falcon-7b-instruct",
-        "microsoft/DialoGPT-medium",
-        "gpt2"
-    ]
+    # Выбор модели
+    print("\nДоступные модели:")
+    print("1. gpt2 (быстрая, маленькая)")
+    print("2. microsoft/DialoGPT-medium (диалоговая)")
+    print("3. tiiuae/falcon-7b-instruct (мощная, но может не работать)")
 
-    for model_name in models_to_try:
-        print(f"\nПопытка загрузить модель: {model_name}")
-        try:
-            bot = RAGBot(
-                faiss_index_path=faiss_index_path,
-                embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-                llm_model=model_name
-            )
-            print(f"✅ Модель {model_name} загружена успешно")
-            break
-        except Exception as e:
-            print(f"❌ Ошибка с моделью {model_name}: {e}")
-            if model_name == models_to_try[-1]:
-                print("\n❌ Все модели не сработали. Проверьте подключение к интернету.")
-                return
+    choice = input("\nВыберите модель (1-3, по умолчанию 1): ").strip()
+
+    model_map = {
+        "1": "gpt2",
+        "2": "microsoft/DialoGPT-medium",
+        "3": "tiiuae/falcon-7b-instruct"
+    }
+
+    llm_model = model_map.get(choice, "gpt2")
+
+    print(f"\nЗагружаю модель: {llm_model}")
+    print("Использую CPU для стабильности...")
+
+    try:
+        bot = SimpleRAGBot(
+            faiss_index_path=faiss_index_path,
+            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+            llm_model=llm_model
+        )
+        print("✅ Бот успешно инициализирован!")
+
+    except Exception as e:
+        print(f"❌ Ошибка при загрузке модели {llm_model}: {e}")
+        print("Пробую загрузить gpt2...")
+        bot = SimpleRAGBot(
+            faiss_index_path=faiss_index_path,
+            llm_model="gpt2"
+        )
+        print("✅ Бот с GPT2 успешно инициализирован!")
 
     print("\n" + "=" * 60)
-    print("🤖 RAG Bot запущен. Введите 'exit' или 'выход' для завершения.")
+    print("Введите 'exit' или 'выход' для завершения")
     print("=" * 60)
 
     while True:
         try:
             query = input("\n❔ Ваш вопрос: ").strip()
+
             if not query:
                 continue
 
@@ -180,19 +176,29 @@ def main():
                 print("Завершение работы...")
                 break
 
-            print("🤔 Ищу информацию...")
-            answer = bot.ask(query)
+            # Получаем ответ
+            result = bot.ask(query)
 
+            # Выводим ответ
             print("\n" + "=" * 60)
-            print("💬 Ответ:")
-            print(answer)
+            print("💬 ОТВЕТ:")
+            print(result["answer"])
+            print("\n📚 ИСТОЧНИКИ:")
+
+            if result["sources"]:
+                for i, doc in enumerate(result["sources"], 1):
+                    preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
+                    print(f"{i}. {preview}")
+            else:
+                print("Источники не найдены")
+
             print("=" * 60)
 
         except KeyboardInterrupt:
-            print("\nЗавершение работы...")
+            print("\n\nЗавершение работы...")
             break
         except Exception as e:
-            print(f"Ошибка: {e}")
+            print(f"\n❌ Ошибка: {e}")
 
 
 if __name__ == "__main__":
