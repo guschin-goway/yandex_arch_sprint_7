@@ -1,75 +1,227 @@
+import torch
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-import requests
-import json
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 
-class SimpleRussianRAG:
+class WorkingRAG:
     def __init__(self, faiss_index_path):
-        print("Загружаю русскую RAG систему...")
+        print("🚀 Инициализация RAG системы...")
 
-        # Русские эмбеддинги
+        # 1. Загружаем эмбеддинги и FAISS
         self.embeddings = HuggingFaceEmbeddings(
-            model_name="cointegrated/LaBSE-en-ru"
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={'device': 'cpu'}
         )
 
-        # Загружаем FAISS
+        print("📁 Загружаю векторную базу знаний...")
         self.vector_store = FAISS.load_local(
             faiss_index_path,
             self.embeddings,
             allow_dangerous_deserialization=True
         )
+        print("✅ Векторная база загружена")
 
-        print("✅ Система готова (только поиск, без генерации)")
+        # 2. Загружаем модель (используем русскоязычную или хорошо обученную)
+        print("🧠 Загружаю языковую модель...")
 
-    def smart_search(self, question):
-        """Умный поиск с извлечением релевантных фрагментов"""
-        docs = self.vector_store.similarity_search(question, k=3)
+        # Попробуем разные модели в порядке надежности
+        models_to_try = [
+            "sberbank-ai/rugpt3small_based_on_gpt2",  # Русскоязычная GPT-2
+            "ai-forever/rugpt3small_based_on_gpt2",  # Еще одна русская
+            "gpt2"  # Английская как запасной вариант
+        ]
 
-        if not docs:
-            return "❌ Ничего не найдено"
+        self.model = None
+        self.tokenizer = None
 
-        results = []
-        for i, doc in enumerate(docs, 1):
-            content = doc.page_content
+        for model_name in models_to_try:
+            try:
+                print(f"  Пробую {model_name}...")
+                self.tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-            # Ищем предложения с ключевыми словами вопроса
-            keywords = question.lower().split()
-            sentences = content.split('. ')
+                # Критически важные настройки для русских моделей
+                if "ru" in model_name or "sber" in model_name:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            relevant_sentences = []
-            for sentence in sentences:
-                if any(keyword in sentence.lower() for keyword in keywords if len(keyword) > 3):
-                    relevant_sentences.append(sentence.strip())
+                self.model = AutoModelForCausalLM.from_pretrained(model_name)
+                print(f"  ✅ {model_name} загружена успешно!")
+                self.model_name = model_name
+                break
+            except Exception as e:
+                print(f"  ❌ {model_name}: {str(e)[:100]}...")
+                continue
 
-            if relevant_sentences:
-                excerpt = '. '.join(relevant_sentences[:2]) + '.'
+        if self.model is None:
+            print("❌ Не удалось загрузить ни одну модель!")
+            raise Exception("Все модели не сработали")
+
+        # 3. Создаем пайплайн с правильными параметрами
+        print("⚙️ Настраиваю генератор...")
+        self.generator = pipeline(
+            "text-generation",
+            model=self.model,
+            tokenizer=self.tokenizer,
+            max_new_tokens=80,  # Короткие ответы
+            temperature=0.8,  # Более креативно
+            top_p=0.92,  # Контроль разнообразия
+            do_sample=True,  # Включить случайность
+            repetition_penalty=1.2,  # Штраф за повторения
+            pad_token_id=self.tokenizer.pad_token_id if hasattr(self.tokenizer, 'pad_token_id') else 50256,
+            truncation=True,  # Явно включаем усечение
+            device=-1  # CPU для стабильности
+        )
+
+        print("✅ Система готова к работе!\n")
+
+    def create_smart_prompt(self, question, context):
+        """Создает умный промпт в зависимости от модели"""
+        if "ru" in self.model_name or "sber" in self.model_name:
+            # Промпт для русскоязычной модели
+            return f"""Задание: Ответь на вопрос на основе информации из документов.
+
+Контекстная информация:
+{context}
+
+Вопрос: {question}
+
+Требования к ответу:
+1. Будь точным и используй информацию из контекста
+2. Если информации нет, скажи "В документах нет информации"
+3. Отвечай кратко и по делу
+
+Ответ:"""
+        else:
+            # Промпт для английской модели (более простой)
+            return f"""Based on this information: {context}
+
+Question: {question}
+
+Answer in Russian:"""
+
+    def ask(self, question):
+        """Основной метод для вопросов"""
+        print(f"\n🔍 Вопрос: '{question}'")
+
+        # 1. Ищем релевантные документы (берем немного)
+        print("   Ищу информацию в базе знаний...")
+        try:
+            docs = self.vector_store.similarity_search(question, k=2)
+            print(f"   Найдено документов: {len(docs)}")
+        except Exception as e:
+            print(f"   ❌ Ошибка поиска: {e}")
+            return "Ошибка при поиске информации"
+
+        # 2. Формируем КОРОТКИЙ контекст
+        context_parts = []
+        for i, doc in enumerate(docs):
+            # Берем только начало каждого документа
+            content = doc.page_content.strip()
+            if len(content) > 150:  # Ограничиваем длину
+                content = content[:147] + "..."
+            context_parts.append(f"[Источник {i + 1}]: {content}")
+
+        context = "\n".join(context_parts)
+
+        # 3. Создаем промпт
+        prompt = self.create_smart_prompt(question, context)
+
+        # 4. Проверяем длину промпта
+        tokens = self.tokenizer.encode(prompt)
+        print(f"   Длина промпта: {len(tokens)} токенов")
+
+        if len(tokens) > 900:  # Слишком длинный
+            print("   ⚠️  Слишком длинный промпт, сокращаю...")
+            # Берем только первый документ
+            if docs:
+                content = docs[0].page_content.strip()
+                if len(content) > 100:
+                    content = content[:97] + "..."
+                context = f"[Источник]: {content}"
+                prompt = self.create_smart_prompt(question, context)
+
+        # 5. Генерируем ответ
+        print("   🤖 Генерирую ответ...")
+        try:
+            result = self.generator(
+                prompt,
+                return_full_text=False,
+                num_return_sequences=1
+            )
+
+            if result and len(result) > 0:
+                answer = result[0]["generated_text"].strip()
+
+                # Очистка ответа
+                if prompt in answer:
+                    answer = answer.replace(prompt, "").strip()
+
+                # Убираем повторения
+                lines = answer.split('\n')
+                if len(lines) > 1:
+                    answer = lines[0].strip()
+
+                print(f"   ✅ Ответ сгенерирован ({len(answer)} символов)")
+                return answer
             else:
-                excerpt = content[:200] + '...' if len(content) > 200 else content
+                return "Не удалось сгенерировать ответ"
 
-            results.append(f"\n📄 Результат {i}:\n{excerpt}")
+        except Exception as e:
+            print(f"   ❌ Ошибка генерации: {e}")
+            # Возвращаем информацию из контекста как есть
+            if context:
+                return f"На основе найденной информации: {context[:200]}..."
+            return "Не удалось обработать запрос"
 
-        return "\n".join(results)
+
+def main():
+    print("=" * 70)
+    print("🤖 РАБОЧИЙ RAG БОТ С РУССКОЯЗЫЧНОЙ МОДЕЛЬЮ")
+    print("=" * 70)
+
+    # Проверяем наличие FAISS индекса
+    import os
+    if not os.path.exists("./task3/faiss_index"):
+        print("❌ ОШИБКА: Не найден FAISS индекс!")
+        print("Убедитесь, что путь './task3/faiss_index' существует")
+        print("И содержит файлы: index.faiss и index.pkl")
+        return
+
+    try:
+        rag = WorkingRAG("./task3/faiss_index")
+
+        print("\n" + "=" * 70)
+        print("💡 СОВЕТ: Задавайте конкретные вопросы по содержимому документов")
+        print("   Пример: 'Что такое инфернальный огонь?'")
+        print("   Пример: 'Кто главный герой?'")
+        print("=" * 70)
+
+        while True:
+            print("\n" + "-" * 70)
+            question = input("❔ Ваш вопрос: ").strip()
+
+            if not question:
+                continue
+
+            if question.lower() in ["выход", "exit", "quit", "стоп"]:
+                print("\n👋 До свидания!")
+                break
+
+            # Обрабатываем вопрос
+            answer = rag.ask(question)
+
+            print("\n" + "=" * 70)
+            print("💬 ОТВЕТ:")
+            print(answer)
+            print("=" * 70)
+
+    except KeyboardInterrupt:
+        print("\n\n👋 Завершение по запросу пользователя")
+    except Exception as e:
+        print(f"\n❌ Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
 
 
-# Быстрый запуск
 if __name__ == "__main__":
-    print("=" * 60)
-    print("🔍 РУССКИЙ ПОИСКОВЫЙ RAG (без генерации)")
-    print("=" * 60)
-
-    rag = SimpleRussianRAG("./task3/faiss_index")
-
-    print("\nПримеры вопросов:")
-    print("- Лира Вейл кто такая?")
-    print("- Что такое инфернальный огонь?")
-    print("- О чем документы?")
-    print("=" * 60)
-
-    while True:
-        q = input("\n🔎 Ваш вопрос: ").strip()
-        if q.lower() in ["выход", "exit"]:
-            break
-
-        result = rag.smart_search(q)
-        print(f"\n{result}")
+    main()
