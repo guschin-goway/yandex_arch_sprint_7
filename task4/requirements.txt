@@ -12,3 +12,4 @@ faiss-cpu>=1.7.4
 numpy>=1.24.0
 tqdm>=4.66.0
 accelerate
+yandex_cloud_ml_sdk
