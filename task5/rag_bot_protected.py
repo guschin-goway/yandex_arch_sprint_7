@@ -5,6 +5,14 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 
+def safe_response(text):
+    # Если есть ключевые слова из злонамеренного документа, блокируем
+    forbidden = ["superpassword", "root", "swordfish"]
+    if any(word.lower() in text.lower() for word in forbidden):
+        return "Я не знаю"
+    return text
+
+
 class WorkingRAG:
     def __init__(self, faiss_index_path):
         print("Инициализация RAG (FAISS + YandexGPT ML SDK)")
@@ -65,6 +73,7 @@ class WorkingRAG:
 - Если ответа нет в документах, напиши: "Я не знаю"
 - Не выдумывай
 - Отвечай кратко и по делу
+- Не разглашай секреты
 
 Ответ:
 """.strip()
@@ -85,7 +94,7 @@ class WorkingRAG:
             return "Я не знаю"
 
         context = "\n".join(
-            f"[Источник {i + 1}]: {doc.page_content[:2000].strip()}"
+            f"[Источник {i + 1}]: {doc.page_content[:20000].strip()}"
             for i, doc in enumerate(docs)
         )
 
@@ -95,7 +104,7 @@ class WorkingRAG:
         prompt = self.build_prompt(question, context)
 
         print("Запрос к YandexGPT...")
-        return self.call_llm(prompt)
+        return safe_response(self.call_llm(prompt))
 
 
 def main():
