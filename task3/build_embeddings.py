@@ -11,7 +11,7 @@ INDEX_DIR = Path("task3/faiss_index")
 
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
-CHUNK_SIZE = 1000
+CHUNK_SIZE = 400
 CHUNK_OVERLAP = 200
 
 embeddings = HuggingFaceEmbeddings(

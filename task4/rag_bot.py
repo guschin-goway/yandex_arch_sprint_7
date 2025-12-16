@@ -117,23 +117,13 @@ class WorkingRAG:
         # k можно чуть увеличить
         results = self.vector_store.similarity_search_with_score(
             question,
-            k=15
+            k=5
         )
-
-        print(results)
-        # FAISS: чем МЕНЬШЕ score — тем лучше
-        filtered = [
-            (doc, score) for doc, score in results
-            if score < 0.8
-        ]
-
-        if not filtered:
-            return "Я не знаю"
 
         context_blocks = []
         sources = []
 
-        for i, (doc, score) in enumerate(filtered):
+        for i, (doc, score) in enumerate(results):
             text = doc.page_content.strip()
             meta = doc.metadata or {}
 
