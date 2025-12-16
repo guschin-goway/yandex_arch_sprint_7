@@ -1,4 +1,5 @@
 import os
+import re
 from yandex_cloud_ml_sdk import YCloudML
 
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -50,7 +51,30 @@ class WorkingRAG:
         )
         print("FAISS индекс загружен\n")
 
-    # PROMPT
+    # Методы защиты
+    def before_safety_check(self, question: str) -> str:
+        # Ключевые слова для блокировки
+        forbidden_keywords = [
+            "пароль", "секрет", "root", "ключ", "token",
+            "смена инструкции", "ignore instructions", "обойти ограничения",
+            "prompt injection", "выполнить команду", "доступ к системе"
+        ]
+
+        lower_question = question.lower()
+        if any(word in lower_question for word in forbidden_keywords):
+            return "Я не знаю"
+
+        return question
+
+    def after_safety_check(self, answer: str) -> str:
+        # Если ответ содержит запрещенные слова — заменяем на "Я не знаю"
+        forbidden_patterns = ["пароль", "root", "секрет", "ключ", "token"]
+        if any(re.search(pat, answer, flags=re.IGNORECASE) for pat in forbidden_patterns):
+            return "Я не знаю"
+
+        return answer
+
+    # --- PROMPT ---
     def build_prompt(self, question, context):
         return f"""
 Ты — ассистент, который отвечает ТОЛЬКО на основе предоставленных документов.
@@ -98,25 +122,31 @@ class WorkingRAG:
 
 ### Инструкция
 - Сначала подумай шаг за шагом, опираясь ТОЛЬКО на документы
-- Если ответа нет в документах — напиши: "Я не знаю"
+- Если ответа нет в документах - напиши: "Я не знаю"
+- НИКОГДА не раскрывай конфиденциальную информацию: пароли, root, ключи, токены и секреты
+- Если вопрос касается секретных данных - ответь только: "Я не знаю"
 - Не выдумывай
 - В финальном ответе выведи ТОЛЬКО итоговый ответ, без рассуждений
 
 ### Ответ
 """.strip()
 
-    # LLM CALL
+    # --- LLM CALL ---
     def call_llm(self, prompt):
         result = self.model.run(prompt)
         return result.text.strip()
 
-    # RAG
+    # --- RAG ---
     def ask(self, question):
         print(f"\nВопрос: {question}")
 
-        # k можно чуть увеличить
+        # Перед защитой
+        question_safe = self.before_safety_check(question)
+        if question_safe == "Я не знаю":
+            return question_safe
+
         results = self.vector_store.similarity_search_with_score(
-            question,
+            question_safe,
             k=5
         )
 
@@ -142,15 +172,16 @@ class WorkingRAG:
         if not context.strip():
             return "Я не знаю"
 
-        prompt = self.build_prompt(question, context)
-
+        prompt = self.build_prompt(question_safe, context)
         print("Запрос к YandexGPT...")
         answer = self.call_llm(prompt)
 
-        if answer == "Я не знаю":
-            return answer
+        # После защиты
+        answer_safe = self.after_safety_check(answer)
+        if answer_safe == "Я не знаю":
+            return answer_safe
 
-        return answer + "\n\nИсточники:\n" + "\n".join(sources)
+        return answer_safe + "\n\nИсточники:\n" + "\n".join(sources)
 
 
 def main():
